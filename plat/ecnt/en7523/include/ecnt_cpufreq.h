@@ -19,6 +19,21 @@ enum e_cpu_freq {
     cpu_freq_1100M,
     cpu_freq_1150M,
     cpu_freq_1200M,
+    /*
+     * Steps above the vendor's 1200 MHz top. Only posdiv=0 works up here, so
+     * the grid is a hard 50 MHz: freq = pcw * 50 with pcw an integer. 1450 is
+     * the measured ceiling at stock Vcore on both Nokia XG-040G-MD (AN7581)
+     * and XG-040G-MF (AN7583); 1500 hangs either board within seconds.
+     *
+     * Keep these in step with cpu_freq_config_pcw[], cpu_freq_config_posdiv[]
+     * and armpll_clk_MHz[]: everything here is indexed by this enum and walked
+     * up to cpu_freq_last, so a short array is an EL3 out-of-bounds read.
+     */
+    cpu_freq_1250M,
+    cpu_freq_1300M,
+    cpu_freq_1350M,
+    cpu_freq_1400M,
+    cpu_freq_1450M,
 #endif
     cpu_freq_last
 };
