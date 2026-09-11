@@ -34,6 +34,21 @@ enum e_cpu_freq {
     cpu_freq_1350M,
     cpu_freq_1400M,
     cpu_freq_1450M,
+    /*
+     * Headroom for raised Vcore. Nothing has been shown stable up here at
+     * stock voltage - 1500 kills both boards - but the SoC can drive an
+     * external buck through its AVS DAC, and these steps become reachable
+     * once that is in use. They live here rather than being added later
+     * because this table sits in the fip volume: extending it means
+     * replacing the bootloader, while the DTS that decides which steps the
+     * governor may actually ask for rides in the ordinary firmware image.
+     *
+     * Listing a step costs nothing on its own. It is only reachable if the
+     * DTS offers it, and an index past the end is refused outright.
+     */
+    cpu_freq_1500M,
+    cpu_freq_1550M,
+    cpu_freq_1600M,
 #endif
     cpu_freq_last
 };
