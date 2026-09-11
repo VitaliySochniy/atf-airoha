@@ -513,6 +513,23 @@ int an7552_bootup_clk_src_switch(enum e_cpu_freq cpuFreq)
 int en7523_armpll_set(enum e_cpu_freq cpuFreq)
 {
     unsigned int val;
+
+    /*
+     * The index arrives straight from the kernel's opp-level over SMC and is
+     * used to subscript three tables, so an out of range value is an EL3 read
+     * past the end of an array followed by whatever it found being programmed
+     * into the PLL. Nothing upstream of here checks it.
+     *
+     * That matters because the DTS and this table are versioned separately:
+     * a kernel carrying more OPP steps than the running BL31 knows about is a
+     * perfectly ordinary thing to end up with after flashing one but not the
+     * other.
+     */
+    if (cpuFreq >= cpu_freq_last) {
+        printf("ERROR: cpu freq index %d out of range, highest is %d\n",
+               cpuFreq, cpu_freq_last - 1);
+        return -1;
+    }
 #if 0	//YMC mark for new AVS FW
     AVS_STATUS_T ret;
 
