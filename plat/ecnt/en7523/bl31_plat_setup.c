@@ -199,6 +199,16 @@ void bl31_early_platform_setup2(u_register_t arg0, u_register_t arg1,
 /*******************************************************************************
  * Perform any BL3-1 platform setup code
  ******************************************************************************/
+/*
+ * Target CPU core voltage in millivolts, or 0 to leave the rail alone.
+ *
+ * 1050 is the highest level the vendor's own driver ever programmes; its
+ * documented ceiling is 1150 and it refuses anything outside 850..1150. Stock
+ * on this board measures 987 mV, and that is the voltage every frequency
+ * result so far was taken at, 1450 MHz included.
+ */
+#define ECNT_VCORE_TARGET_MV	1050
+
 void bl31_platform_setup(void)
 {
 	uint32_t i = 0;
@@ -224,12 +234,47 @@ void bl31_platform_setup(void)
 	 */
 	{
 		extern unsigned int AVS_Probe_Vcore(int *efuse_ok);
+		extern unsigned int AVS_Set_ABS(unsigned int mV);
 		int efuse_ok = 0;
 		unsigned int vcore = AVS_Probe_Vcore(&efuse_ok);
 
 		NOTICE("Vcore: %u.%03u V, AVS calibration %s\n",
 		       vcore / 1000, vcore % 1000,
 		       efuse_ok ? "present" : "MISSING");
+
+		/*
+		 * Raise the core supply once, here, and never touch it again.
+		 *
+		 * It would be better to move it with the frequency, and that is
+		 * where this has to end up, but not by calling AVS_Set_ABS() from
+		 * the frequency path: that function converges on its target by
+		 * stepping the DAC and re-reading the ADC, ten milliseconds per
+		 * iteration and up to a hundred and fifty of them. A governor
+		 * changes frequency several times a second and BL31 runs this in
+		 * EL3, so putting a convergence loop in that path would stall the
+		 * system for as long as it takes to settle. Doing it per step
+		 * needs the DAC code cached per voltage level, which is a bigger
+		 * change than this one.
+		 *
+		 * Setting it here also sidesteps a register the kernel shares:
+		 * enabling the DAC is a read-modify-write of 0x2a0, and the
+		 * thermal driver keeps its diode selection in the same register.
+		 * At this point Linux does not exist yet, so nothing can race.
+		 *
+		 * A failure is not fatal. The board keeps whatever the fixed
+		 * divider gives it, which is what it ran at before any of this.
+		 */
+		if (ECNT_VCORE_TARGET_MV && efuse_ok) {
+			if (AVS_Set_ABS(ECNT_VCORE_TARGET_MV) == 0) {
+				vcore = AVS_Probe_Vcore(NULL);
+				NOTICE("Vcore raised to %u.%03u V (asked %u mV)\n",
+				       vcore / 1000, vcore % 1000,
+				       ECNT_VCORE_TARGET_MV);
+			} else {
+				ERROR("Vcore: could not set %u mV, staying at stock\n",
+				      ECNT_VCORE_TARGET_MV);
+			}
+		}
 	}
 #endif
 
