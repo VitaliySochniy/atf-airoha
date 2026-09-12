@@ -89,5 +89,6 @@ typedef enum
 
 extern u32 AVS_Set_ABS(u32 V_SEL);
 extern u32 AVS_Get_Vcore(void);
+extern u32 AVS_Probe_Vcore(int *efuse_ok);
 
 #endif

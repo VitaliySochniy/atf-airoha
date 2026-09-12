@@ -404,6 +404,33 @@ static void get_avs_EF_K(void)
 }
 
 //return value unit = 0.001V 
+/*
+ * Read the core voltage without changing it.
+ *
+ * AVS_Get_Vcore() on its own is not usable cold: it leans on the ADC slope and
+ * the low-voltage code that get_avs_EF_K() pulls out of efuse, and on the ADC
+ * that TADC_init() brings up. Both are static, so callers outside this file
+ * have no way to prepare them, and the only entry points that do are the ones
+ * that also drive the DAC.
+ *
+ * This exists to answer two questions before anything is changed: what the
+ * board's fixed divider actually produces, and whether this die carries valid
+ * AVS calibration at all - without it the vendor code refuses to set a voltage.
+ * The efuse verdict comes back in *efuse_ok.
+ */
+u32 AVS_Probe_Vcore(int *efuse_ok)
+{
+	if (g_EF_LOAD_done == 0) {
+		TADC_init();
+		get_avs_EF_K();
+	}
+
+	if (efuse_ok)
+		*efuse_ok = g_EF_OK_flag;
+
+	return AVS_Get_Vcore();
+}
+
 u32 AVS_Get_Vcore(void)
 {
 

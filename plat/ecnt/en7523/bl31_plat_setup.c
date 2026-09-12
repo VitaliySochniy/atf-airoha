@@ -212,6 +212,27 @@ void bl31_platform_setup(void)
 	
 	efuse_init();
 
+#if defined(TCSUPPORT_CPU_AN7583)
+	/*
+	 * Say what the CPU core is actually running at. Every frequency result
+	 * this platform has been characterised with was taken at whatever the
+	 * board's fixed divider produces, and that number has only ever been
+	 * assumed. It also reports whether this die carries AVS calibration,
+	 * without which no voltage can be set at all.
+	 *
+	 * Read only; the DAC is left alone.
+	 */
+	{
+		extern unsigned int AVS_Probe_Vcore(int *efuse_ok);
+		int efuse_ok = 0;
+		unsigned int vcore = AVS_Probe_Vcore(&efuse_ok);
+
+		NOTICE("Vcore: %u.%03u V, AVS calibration %s\n",
+		       vcore / 1000, vcore % 1000,
+		       efuse_ok ? "present" : "MISSING");
+	}
+#endif
+
 	plat_ecnt_io_setup(NULL);
 
 	/* Initialize the gic cpu and distributor interfaces */
