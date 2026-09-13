@@ -90,5 +90,10 @@ typedef enum
 extern u32 AVS_Set_ABS(u32 V_SEL);
 extern u32 AVS_Get_Vcore(void);
 extern u32 AVS_Probe_Vcore(int *efuse_ok);
+extern int AVS_Fast_Calibrate(void);
+extern int AVS_Fast_Ready(void);
+extern u32 AVS_Fast_Now(void);
+extern int AVS_Fast_Set_mV(u32 mv);
+extern u32 AVS_Fast_Verify(u32 mv);
 
 #endif

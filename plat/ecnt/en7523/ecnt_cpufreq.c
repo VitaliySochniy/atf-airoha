@@ -95,6 +95,31 @@ static unsigned int  armpll_clk_MHz[]         = {  500,  550,  600,  650,  700, 
 
 static unsigned int clk_divider_config[]={0x0, 0xa, 0xb, 0x1d};
 
+#if defined(TCSUPPORT_CPU_AN7583)
+/*
+ * CPU core voltage per frequency step, in mV, indexed like the tables above.
+ *
+ * Up to 1450 MHz the stock rail is enough: 1450 held 11 h 35 min of full load
+ * at the 987 mV the board's divider gives. 1000 is the vendor's nominal level,
+ * within the ADC's tolerance of that. 1500 to 1600 need more - 1500 hangs within
+ * a minute at stock - and held short tests at 1050, the highest level the
+ * vendor's own driver ever programmes.
+ */
+static unsigned int cpu_freq_vcore_mV[] = {
+	1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000,	/*  500 -  950 */
+	1000, 1000, 1000, 1000, 1000,					/* 1000 - 1200 */
+	1000, 1000, 1000, 1000, 1000,					/* 1250 - 1450 */
+	1050, 1050, 1050,						/* 1500 - 1600 */
+};
+
+/* Highest step voltage known to hold on the stock rail without AVS. */
+#define VCORE_UNMANAGED_OK_MV	1000
+
+extern int AVS_Fast_Ready(void);
+extern unsigned int AVS_Fast_Now(void);
+extern int AVS_Fast_Set_mV(unsigned int mv);
+#endif
+
 
 void set_cpu_domain_clk_gating(enum cpu_domain_clk_gating pll, int isEnable)
 {
@@ -550,12 +575,54 @@ int en7523_armpll_set(enum e_cpu_freq cpuFreq)
 #endif
 	
 	/* switch to PLL2_CLK */
+#if defined(TCSUPPORT_CPU_AN7583)
+	/*
+	 * Never program a step whose voltage cannot be applied. Without the fast
+	 * AVS path (BL2, or a die without calibration) only the steps the stock
+	 * rail is known to hold are allowed.
+	 */
+	if (!AVS_Fast_Ready() && cpu_freq_vcore_mV[cpuFreq] > VCORE_UNMANAGED_OK_MV) {
+		printf("ERROR: cpu freq index %d needs %u mV, core voltage not managed\n",
+		       cpuFreq, cpu_freq_vcore_mV[cpuFreq]);
+		return -1;
+	}
+#endif
+
 	if (clk_src_switch(clk_src_pll2)) {
 		printf("cpu clock switch to pll2 fail.\n");
 		/* disable PLL2_CLK */
 		set_cpu_domain_clk_gating(cpu_clk_pll2, 0);
 		return -1;
 	}
+
+#if defined(TCSUPPORT_CPU_AN7583)
+	/*
+	 * Move the core supply here, while the CPU runs from PLL2 at 400 MHz.
+	 *
+	 * The order of voltage and frequency matters both ways - voltage up
+	 * before frequency up, frequency down before voltage down - and getting
+	 * it wrong opens a window of a high clock on a low rail. Parked on PLL2
+	 * any rail in the permitted range is safe, so a single point serves both
+	 * directions. It also has to come before the write protect is opened
+	 * below: the fast path re-locks it when done.
+	 *
+	 * If the rail cannot be raised, give up before touching ARMPLL; switching
+	 * back leaves the CPU on the clock it had. Failing to lower it is harmless.
+	 */
+	if (AVS_Fast_Ready()) {
+		unsigned int want = cpu_freq_vcore_mV[cpuFreq];
+		unsigned int now = AVS_Fast_Now();
+
+		if (AVS_Fast_Set_mV(want) && want > now) {
+			printf("ERROR: could not raise Vcore to %u mV for freq index %d\n",
+			       want, cpuFreq);
+			if (clk_src_switch(clk_src_armpll))
+				printf("cpu clock switch to armpll fail.\n");
+			set_cpu_domain_clk_gating(cpu_clk_pll2, 0);
+			return -1;
+		}
+	}
+#endif
 
     /* disable PLL Write Protect */
     val = readReg(CR_PLL_WR_PROTECT);

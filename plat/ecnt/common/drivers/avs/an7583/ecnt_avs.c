@@ -431,6 +431,133 @@ u32 AVS_Probe_Vcore(int *efuse_ok)
 	return AVS_Get_Vcore();
 }
 
+/*
+ * Fast voltage path, for use on every CPU frequency change.
+ *
+ * AVS_Set_ABS() reaches its target by stepping the DAC and re-reading the ADC,
+ * ten milliseconds a turn and up to a hundred and fifty turns. BL31 serves
+ * frequency changes in EL3 several times a second, so that loop cannot sit in
+ * that path. Instead the DAC code is computed from a reference point that
+ * AVS_Set_ABS() converged on once, at startup, and the vendor's own transfer
+ * slope, noted in DAC_approach_Vcore(): Vavs = Vref - Vdac * 0.5. One DAC code
+ * therefore moves the rail by AVS_DAC_step / 2 hundredths of a millivolt, and
+ * a higher code means a lower voltage.
+ *
+ * Nothing here touches the ADC. At runtime the kernel's thermal driver owns
+ * the ADC mux, and reading the core voltage would move it underneath that
+ * driver. What is shared regardless is the write protect: a write made just
+ * after someone else re-locked it is dropped without any error, so the code is
+ * read back and the write repeated.
+ */
+static u32 g_fast_code_ref, g_fast_mv_ref, g_fast_mv_now;
+static u8 g_fast_ready;
+
+#define FAST_UV100_PER_CODE	(AVS_DAC_step / 2)
+#define FAST_CODE_MIN		0x80
+#define FAST_CODE_MAX		0x350
+#define FAST_TRIES		3
+
+static u32 fast_measure(void)
+{
+	u32 i, v, sum = 0;
+
+	/* the ADC is good to +/-10 mV per reading, average a few */
+	for (i = 0; i < 4; i++) {
+		v = AVS_Get_Vcore();
+		if (!v)
+			return 0;
+		sum += v;
+	}
+
+	return (sum + 2) / 4;
+}
+
+/* Take the point AVS_Set_ABS() converged on as the reference. Startup only. */
+int AVS_Fast_Calibrate(void)
+{
+	u32 code;
+
+	g_fast_ready = 0;
+
+	if (!get_avs_DAC(&code))
+		return -1;	/* DAC output off: nothing has converged */
+
+	g_fast_mv_ref = fast_measure();
+	if (!g_fast_mv_ref)
+		return -1;
+
+	g_fast_code_ref = code;
+	g_fast_mv_now = g_fast_mv_ref;
+	g_fast_ready = 1;
+
+	return 0;
+}
+
+int AVS_Fast_Ready(void)
+{
+	return g_fast_ready;
+}
+
+u32 AVS_Fast_Now(void)
+{
+	return g_fast_mv_now;
+}
+
+static u32 fast_code_for(u32 mv)
+{
+	int code = (int)g_fast_code_ref -
+		   ((int)mv - (int)g_fast_mv_ref) * 100 / (int)FAST_UV100_PER_CODE;
+
+	if (code < FAST_CODE_MIN)
+		code = FAST_CODE_MIN;
+	if (code > FAST_CODE_MAX)
+		code = FAST_CODE_MAX;
+
+	return (u32)code;
+}
+
+int AVS_Fast_Set_mV(u32 mv)
+{
+	u32 code, rb, tries = FAST_TRIES;
+
+	if (!g_fast_ready)
+		return -1;
+
+	if (mv < Vcore_L_thd)
+		mv = Vcore_L_thd;
+	if (mv > Vcore_H_thd)
+		mv = Vcore_H_thd;
+	if (mv == g_fast_mv_now)
+		return 0;
+
+	code = fast_code_for(mv);
+	do {
+		set_chip_scu_data(PLLRG_PROTECT, PROTECT_KEY);
+		set_chip_scu_data(RG_DATA_AVS_DAC, code);
+		AVS_DAC_CHG();
+		set_chip_scu_data(PLLRG_PROTECT, 0x0);
+		rb = get_chip_scu_data(RG_DATA_AVS_DAC) & 0x3ff;
+	} while (rb != code && --tries);
+
+	if (rb != code)
+		return -1;
+
+	/* let the buck follow its feedback node before anything relies on it */
+	udelay(DAC_ST_Time * 1000);
+	g_fast_mv_now = mv;
+
+	return 0;
+}
+
+/* Startup only: set through the fast path, then measure what it produced. */
+u32 AVS_Fast_Verify(u32 mv)
+{
+	if (AVS_Fast_Set_mV(mv))
+		return 0;
+
+	return fast_measure();
+}
+
 u32 AVS_Get_Vcore(void)
 {
 

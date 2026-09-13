@@ -207,7 +207,7 @@ void bl31_early_platform_setup2(u_register_t arg0, u_register_t arg1,
  * on this board measures 987 mV, and that is the voltage every frequency
  * result so far was taken at, 1450 MHz included.
  */
-#define ECNT_VCORE_TARGET_MV	1050
+#define ECNT_VCORE_TARGET_MV	1000	/* voltage for 1200 MHz, where BL2 leaves the clock */
 
 void bl31_platform_setup(void)
 {
@@ -235,6 +235,8 @@ void bl31_platform_setup(void)
 	{
 		extern unsigned int AVS_Probe_Vcore(int *efuse_ok);
 		extern unsigned int AVS_Set_ABS(unsigned int mV);
+		extern int AVS_Fast_Calibrate(void);
+		extern unsigned int AVS_Fast_Verify(unsigned int mv);
 		int efuse_ok = 0;
 		unsigned int vcore = AVS_Probe_Vcore(&efuse_ok);
 
@@ -264,16 +266,27 @@ void bl31_platform_setup(void)
 		 * A failure is not fatal. The board keeps whatever the fixed
 		 * divider gives it, which is what it ran at before any of this.
 		 */
-		if (ECNT_VCORE_TARGET_MV && efuse_ok) {
-			if (AVS_Set_ABS(ECNT_VCORE_TARGET_MV) == 0) {
-				vcore = AVS_Probe_Vcore(NULL);
-				NOTICE("Vcore raised to %u.%03u V (asked %u mV)\n",
-				       vcore / 1000, vcore % 1000,
-				       ECNT_VCORE_TARGET_MV);
-			} else {
-				ERROR("Vcore: could not set %u mV, staying at stock\n",
-				      ECNT_VCORE_TARGET_MV);
-			}
+		if (ECNT_VCORE_TARGET_MV && efuse_ok &&
+		    AVS_Set_ABS(ECNT_VCORE_TARGET_MV) == 0 &&
+		    AVS_Fast_Calibrate() == 0) {
+			unsigned int v;
+
+			vcore = AVS_Probe_Vcore(NULL);
+			NOTICE("Vcore: reference %u.%03u V, per-step voltage on\n",
+			       vcore / 1000, vcore % 1000);
+
+			/*
+			 * Prove the fast path against the ADC while nothing else
+			 * can touch it: up to the highest step level and back.
+			 */
+			v = AVS_Fast_Verify(1050);
+			NOTICE("Vcore: fast path 1050 mV -> measured %u mV\n", v);
+			v = AVS_Fast_Verify(ECNT_VCORE_TARGET_MV);
+			NOTICE("Vcore: fast path %u mV -> measured %u mV\n",
+			       ECNT_VCORE_TARGET_MV, v);
+		} else {
+			ERROR("Vcore: per-step voltage off, steps above %u mV refused\n",
+			      ECNT_VCORE_TARGET_MV);
 		}
 	}
 #endif
