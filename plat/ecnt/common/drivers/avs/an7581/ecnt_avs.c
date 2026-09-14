@@ -386,7 +386,7 @@ int AVS_EN7581_Calibrate(void)
 	if (dac_ramp(g_ref_code))
 		goto fail;
 	rise = (int)v4 - (int)v3;
-	NOTICE("AVS: slope %u/1000 units per code, stock rail at code %u, +%u mV -> %+d units (want %u)\n",
+	NOTICE("AVS: slope %u/1000 units per code, stock rail at code %u, +%u mV -> %d units (want %u)\n",
 	       g_slope, g_ref_code, VERIFY_MV, rise, want);
 	if (rise < (int)(want - want / 3) - 2 || rise > (int)(want + want / 3) + 2) {
 		ERROR("AVS: raised level missed\n");
