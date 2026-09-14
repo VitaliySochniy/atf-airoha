@@ -289,6 +289,22 @@ void bl31_platform_setup(void)
 			      ECNT_VCORE_TARGET_MV);
 		}
 	}
+#elif defined(TCSUPPORT_CPU_EN7581)
+	/*
+	 * EN7581: find this board's stock rail and whether its AVS pin reaches
+	 * the buck at all, while Linux cannot yet touch the ADC. Steps that need
+	 * more than the stock rail are refused unless this succeeds.
+	 */
+	{
+		extern int AVS_EN7581_Calibrate(void);
+		int r = AVS_EN7581_Calibrate();
+
+		if (r == 0)
+			NOTICE("Vcore: per-step voltage on\n");
+		else
+			NOTICE("Vcore: per-step voltage off (%s), steps above the stock rail refused\n",
+			       r > 0 ? "no AVS path" : "calibration failed");
+	}
 #endif
 
 	plat_ecnt_io_setup(NULL);

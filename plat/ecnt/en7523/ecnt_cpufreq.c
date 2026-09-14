@@ -114,7 +114,31 @@ static unsigned int cpu_freq_vcore_mV[] = {
 
 /* Highest step voltage known to hold on the stock rail without AVS. */
 #define VCORE_UNMANAGED_OK_MV	1000
+#define VCORE_STEPS
+#elif defined(TCSUPPORT_CPU_EN7581) && defined(IMAGE_BL31)
+/*
+ * CPU core voltage per frequency step, in mV ABOVE THIS BOARD'S STOCK RAIL,
+ * indexed like the tables above. EN7581 has no absolute AVS calibration, so
+ * BL31 finds the stock point at startup and works in offsets from it
+ * (drivers/avs/an7581).
+ *
+ * Up to 1450 MHz the stock rail holds. 1500 hangs within seconds at stock on
+ * both boards tried; 1500 and 1600 held under load at about +48 mV on the one
+ * whose AVS pin reaches the buck.
+ */
+static unsigned int cpu_freq_vcore_mV[] = {
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0,		/*  500 -  950 */
+	0, 0, 0, 0, 0,				/* 1000 - 1200 */
+	0, 0, 0, 0, 0,				/* 1250 - 1450 */
+	50, 50, 50,				/* 1500 - 1600 */
+};
 
+/* Without a working AVS path only the stock rail is available. */
+#define VCORE_UNMANAGED_OK_MV	0
+#define VCORE_STEPS
+#endif
+
+#ifdef VCORE_STEPS
 extern int AVS_Fast_Ready(void);
 extern unsigned int AVS_Fast_Now(void);
 extern int AVS_Fast_Set_mV(unsigned int mv);
@@ -575,7 +599,7 @@ int en7523_armpll_set(enum e_cpu_freq cpuFreq)
 #endif
 	
 	/* switch to PLL2_CLK */
-#if defined(TCSUPPORT_CPU_AN7583)
+#ifdef VCORE_STEPS
 	/*
 	 * Never program a step whose voltage cannot be applied. Without the fast
 	 * AVS path (BL2, or a die without calibration) only the steps the stock
@@ -595,7 +619,7 @@ int en7523_armpll_set(enum e_cpu_freq cpuFreq)
 		return -1;
 	}
 
-#if defined(TCSUPPORT_CPU_AN7583)
+#ifdef VCORE_STEPS
 	/*
 	 * Move the core supply here, while the CPU runs from PLL2 at 400 MHz.
 	 *

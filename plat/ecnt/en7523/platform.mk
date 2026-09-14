@@ -493,6 +493,12 @@ endif
 				${ECNT_PLAT_SOC}/plat_topology.c					\
 				${ECNT_PLAT_SOC}/plat_pm.c							\
 				${ECNT_PLAT_SOC}/ecnt_trusted_boot.c
+# EN7581 core voltage per step: board-level AVS calibration, BL31 only
+ifeq ($(TCSUPPORT_CPU_EN7581),1)
+ifneq ($(TCSUPPORT_CPU_AN7583),1)
+	BL31_SOURCES	+=	${ECNT_PLAT}/common/drivers/avs/an7581/ecnt_avs.c
+endif
+endif
 ifneq ($(strip $(TCSUPPORT_CPU_AN7583)$(TCSUPPORT_CPU_EN7581)$(TCSUPPORT_CPU_AN7552)),)
 ifeq ($(TCSUPPORT_CPU_AN7583),1)
 	BL31_SOURCES	+=	${ECNT_PLAT}/common/drivers/avs/${SOC_SUB_DIR}/ecnt_avs.c
