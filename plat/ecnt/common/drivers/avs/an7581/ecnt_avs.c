@@ -58,6 +58,8 @@
 #define MUX_DAC_OUT		3
 
 #define WRITE_TRIES		5
+#define DAC_PRE_MS		5	/* code stable before CHG rises */
+#define DAC_CHG_HOLD_MS		10	/* CHG high */
 #define ADC_SETTLE_MS		20
 #define ADC_SAMPLES		8
 #define ADC_DISCARD		2
@@ -104,21 +106,42 @@ static void protect_close(void)
 	mmio_write_32(PLLRG_PROTECT, mmio_read_32(PLLRG_PROTECT) & ~0xffU);
 }
 
-static int dac_write(unsigned int code)
+/* One protected write, read back in full; the key may be re-locked under us. */
+static int scu_write_checked(uintptr_t reg, unsigned int val)
 {
 	int tries = WRITE_TRIES;
 
 	do {
 		protect_open();
-		mmio_write_32(AVS_DAC, code);
-		mmio_write_32(AVS_DAC, code | DAC_CHG);
-		mmio_write_32(AVS_DAC, code);
+		mmio_write_32(reg, val);
 		protect_close();
-		if ((mmio_read_32(AVS_DAC) & DAC_CODE_MASK) == code)
+		if (mmio_read_32(reg) == val)
 			return 0;
 	} while (--tries);
 
 	return -1;
+}
+
+/*
+ * The DAC takes a code on CHG, but not from a pulse of a few microseconds: at
+ * BL31 speed most codes were never latched (the DAC output stayed on the
+ * previous one), while from userspace, with milliseconds between the writes,
+ * they mostly were. So the code is set first, CHG is held for a while, and
+ * each of the three writes is confirmed on its own. That also means a CHG
+ * whose clearing write was dropped is noticed and cleared again.
+ */
+static int dac_write(unsigned int code)
+{
+	if (scu_write_checked(AVS_DAC, code))
+		return -1;
+	mdelay(DAC_PRE_MS);
+	if (scu_write_checked(AVS_DAC, code | DAC_CHG))
+		return -1;
+	mdelay(DAC_CHG_HOLD_MS);
+	if (scu_write_checked(AVS_DAC, code))
+		return -1;
+
+	return 0;
 }
 
 static unsigned int dac_code(void)
