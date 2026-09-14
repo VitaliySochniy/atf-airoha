@@ -60,6 +60,7 @@
 #define WRITE_TRIES		5
 #define ADC_SETTLE_MS		20
 #define ADC_SAMPLES		8
+#define ADC_DISCARD		2
 #define ADC_GAP_MS		5
 #define RAIL_SETTLE_MS		100	/* calibration, after the rail moved */
 #define DAC_SETTLE_MS		10	/* runtime, as the vendor's AVS */
@@ -75,6 +76,11 @@
 #define CODE_MIN		128
 #define CODE_MAX		1000
 #define MATCH_TOL		8	/* DAC output vs pin before switching on */
+#define MATCH_DONE		2
+#define MATCH_TURNS		12
+#define MATCH_STEP_MAX		200
+#define CODE_START		512
+#define DACOUT_SLOPE		700	/* thousandths of a unit per code, both boards */
 #define JUMP_MAX		30	/* rail step allowed when switching on */
 #define PROBE_CODES		60
 #define MOVE_MIN		6	/* less than this: no AVS path */
@@ -156,11 +162,20 @@ static int adc_mux(unsigned int reg)
 static unsigned int adc_read(unsigned int mux0, unsigned int pos)
 {
 	unsigned int i, sum = 0;
+	unsigned int want = (mux0 & ~TADC_MUX_MASK) | (pos << TADC_MUX_SHIFT);
 
-	if (adc_mux((mux0 & ~TADC_MUX_MASK) | (pos << TADC_MUX_SHIFT)))
-		return 0;
-	mdelay(ADC_SETTLE_MS);
+	/* Only a real change of position needs the ADC to settle again. */
+	if (mmio_read_32(PWD_TADC) != want) {
+		if (adc_mux(want))
+			return 0;
+		mdelay(ADC_SETTLE_MS);
+	}
 
+	/* The first conversions after a change can still be the old value. */
+	for (i = 0; i < ADC_DISCARD; i++) {
+		(void)mmio_read_32(DOUT_TADC);
+		mdelay(ADC_GAP_MS);
+	}
 	for (i = 0; i < ADC_SAMPLES; i++) {
 		sum += (mmio_read_32(DOUT_TADC) & 0xffffU) >> 5;
 		mdelay(ADC_GAP_MS);
@@ -234,7 +249,7 @@ static void give_up(unsigned int match)
  */
 int AVS_EN7581_Calibrate(void)
 {
-	unsigned int mux0, a0, v0, v1, v2, v3, v4, o, lo, hi, m, code;
+	unsigned int mux0, a0, v0, v1, v2, v3, v4, o, i, m, code;
 	unsigned int match = 0, moved, want;
 	int ret = -1, rise;
 
@@ -258,28 +273,42 @@ int AVS_EN7581_Calibrate(void)
 		goto out;
 	}
 
-	/* The DAC output rises with the code, output enabled or not. */
-	lo = CODE_MIN;
-	hi = CODE_MAX;
-	while (hi - lo > 1) {
-		m = (lo + hi) / 2;
+	/*
+	 * The DAC output rises with the code, output enabled or not, by about
+	 * DACOUT_SLOPE thousandths of a unit per code. Walk towards the pin
+	 * with that slope rather than bisecting: on the first boot a bisection
+	 * was thrown off for good by a single stale read, while this simply
+	 * corrects itself on the next turn.
+	 */
+	m = CODE_START;
+	o = 0;
+	for (i = 0; i < MATCH_TURNS; i++) {
+		int step;
+
 		if (dac_write(m))
 			goto fail;
-		if (adc_read(mux0, MUX_DAC_OUT) < a0)
-			lo = m;
-		else
-			hi = m;
+		mdelay(DAC_SETTLE_MS);
+		o = adc_read(mux0, MUX_DAC_OUT);
+		NOTICE("AVS:   code %u -> DAC output %u\n", m, o);
+		if (abs_diff(o, a0) <= MATCH_DONE)
+			break;
+		step = ((int)a0 - (int)o) * 1000 / DACOUT_SLOPE;
+		if (step > MATCH_STEP_MAX)
+			step = MATCH_STEP_MAX;
+		if (step < -MATCH_STEP_MAX)
+			step = -MATCH_STEP_MAX;
+		if (step == 0)
+			step = a0 > o ? 1 : -1;
+		m = (int)m + step < CODE_MIN ? CODE_MIN :
+		    (int)m + step > CODE_MAX ? CODE_MAX : (unsigned int)((int)m + step);
 	}
-	if (dac_write(hi))
-		goto fail;
-	o = adc_read(mux0, MUX_DAC_OUT);
-	if (abs_diff(o, a0) > MATCH_TOL || hi < CODE_MIN + PROBE_CODES) {
+	if (abs_diff(o, a0) > MATCH_TOL || m < CODE_MIN + PROBE_CODES) {
 		ERROR("AVS: no usable DAC code matches the pin (%u at %u, pin %u)\n",
-		      o, hi, a0);
+		      o, m, a0);
 		goto fail;
 	}
 
-	match = hi;
+	match = m;
 	if (output_enable(1))
 		goto fail;
 	mdelay(RAIL_SETTLE_MS);
