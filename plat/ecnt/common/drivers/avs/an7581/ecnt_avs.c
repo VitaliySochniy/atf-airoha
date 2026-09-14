@@ -290,9 +290,19 @@ int AVS_EN7581_Calibrate(void)
 	v0 = adc_read(mux0, MUX_VCORE);
 	NOTICE("AVS: output off, pin %u, Vcore %u (~%u mV), mux 0x%x\n",
 	       a0, v0, a0 ? v0 * FB_REF_MV / a0 : 0, mux0);
-	if (a0 < AVSMON_MIN || a0 > AVSMON_MAX ||
-	    v0 < VCORE_MIN || v0 > VCORE_MAX) {
-		ERROR("AVS: ADC readings out of range\n");
+	if (v0 < VCORE_MIN || v0 > VCORE_MAX) {
+		ERROR("AVS: Vcore reading out of range\n");
+		goto out;
+	}
+	/*
+	 * With the output off a pin tied to the buck sits on its feedback
+	 * reference. On the first MD it reads 1113 instead (the second: 840):
+	 * it is not on the feedback node at all.
+	 */
+	if (a0 < AVSMON_MIN || a0 > AVSMON_MAX) {
+		NOTICE("AVS: pin at %u with the output off is no feedback reference, no AVS path on this board\n",
+		       a0);
+		ret = 1;
 		goto out;
 	}
 
