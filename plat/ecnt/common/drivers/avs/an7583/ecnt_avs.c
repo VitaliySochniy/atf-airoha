@@ -558,6 +558,16 @@ u32 AVS_Fast_Verify(u32 mv)
 	return fast_measure();
 }
 
+/*
+ * Startup only: give up the fast path and hand the rail back to the board's
+ * divider, which every step up to the stock voltage is known to hold on.
+ */
+void AVS_Fast_Disable(void)
+{
+	g_fast_ready = 0;
+	avs_DAC_en(0);
+}
+
 u32 AVS_Get_Vcore(void)
 {
 

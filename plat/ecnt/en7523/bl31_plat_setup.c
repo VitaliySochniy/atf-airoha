@@ -208,6 +208,8 @@ void bl31_early_platform_setup2(u_register_t arg0, u_register_t arg1,
  * result so far was taken at, 1450 MHz included.
  */
 #define ECNT_VCORE_TARGET_MV	1000	/* voltage for 1200 MHz, where BL2 leaves the clock */
+#define ECNT_VCORE_VERIFY_MV	1050	/* highest step level, checked at startup */
+#define ECNT_VCORE_VERIFY_TOL_MV	20	/* averaged ADC is good to a few mV */
 
 void bl31_platform_setup(void)
 {
@@ -237,6 +239,7 @@ void bl31_platform_setup(void)
 		extern unsigned int AVS_Set_ABS(unsigned int mV);
 		extern int AVS_Fast_Calibrate(void);
 		extern unsigned int AVS_Fast_Verify(unsigned int mv);
+		extern void AVS_Fast_Disable(void);
 		int efuse_ok = 0;
 		unsigned int vcore = AVS_Probe_Vcore(&efuse_ok);
 
@@ -269,21 +272,41 @@ void bl31_platform_setup(void)
 		if (ECNT_VCORE_TARGET_MV && efuse_ok &&
 		    AVS_Set_ABS(ECNT_VCORE_TARGET_MV) == 0 &&
 		    AVS_Fast_Calibrate() == 0) {
-			unsigned int v;
+			unsigned int up, back;
 
 			vcore = AVS_Probe_Vcore(NULL);
-			NOTICE("Vcore: reference %u.%03u V, per-step voltage on\n",
+			NOTICE("Vcore: reference %u.%03u V\n",
 			       vcore / 1000, vcore % 1000);
 
 			/*
 			 * Prove the fast path against the ADC while nothing else
 			 * can touch it: up to the highest step level and back.
+			 *
+			 * AVS_Set_ABS() stops as soon as a reading equals its
+			 * target, so on a board whose AVS pin does not reach the
+			 * buck it can report success without ever moving the
+			 * rail, if the stock voltage happens to read as the
+			 * target. The raised level shows it: refuse the fast
+			 * path unless both levels land where they were asked.
 			 */
-			v = AVS_Fast_Verify(1050);
-			NOTICE("Vcore: fast path 1050 mV -> measured %u mV\n", v);
-			v = AVS_Fast_Verify(ECNT_VCORE_TARGET_MV);
+			up = AVS_Fast_Verify(ECNT_VCORE_VERIFY_MV);
 			NOTICE("Vcore: fast path %u mV -> measured %u mV\n",
-			       ECNT_VCORE_TARGET_MV, v);
+			       ECNT_VCORE_VERIFY_MV, up);
+			back = AVS_Fast_Verify(ECNT_VCORE_TARGET_MV);
+			NOTICE("Vcore: fast path %u mV -> measured %u mV\n",
+			       ECNT_VCORE_TARGET_MV, back);
+
+			if (!up || !back ||
+			    up + ECNT_VCORE_VERIFY_TOL_MV < ECNT_VCORE_VERIFY_MV ||
+			    up > ECNT_VCORE_VERIFY_MV + ECNT_VCORE_VERIFY_TOL_MV ||
+			    back + ECNT_VCORE_VERIFY_TOL_MV < ECNT_VCORE_TARGET_MV ||
+			    back > ECNT_VCORE_TARGET_MV + ECNT_VCORE_VERIFY_TOL_MV) {
+				AVS_Fast_Disable();
+				ERROR("Vcore: fast path missed, per-step voltage off, steps above %u mV refused\n",
+				      ECNT_VCORE_TARGET_MV);
+			} else {
+				NOTICE("Vcore: per-step voltage on\n");
+			}
 		} else {
 			ERROR("Vcore: per-step voltage off, steps above %u mV refused\n",
 			      ECNT_VCORE_TARGET_MV);

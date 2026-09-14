@@ -95,5 +95,6 @@ extern int AVS_Fast_Ready(void);
 extern u32 AVS_Fast_Now(void);
 extern int AVS_Fast_Set_mV(u32 mv);
 extern u32 AVS_Fast_Verify(u32 mv);
+extern void AVS_Fast_Disable(void);
 
 #endif
